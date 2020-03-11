@@ -2,8 +2,9 @@ package operator2
 
 import (
 	"context"
-	"github.com/openshift/cluster-authentication-operator/pkg/operator2/workload"
-	"github.com/openshift/library-go/pkg/operator/events"
+	apiservercontrollerset "github.com/openshift/library-go/pkg/operator/apiserver/controllerset"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog"
 	"os"
 	"time"
@@ -23,7 +24,10 @@ import (
 	authopinformer "github.com/openshift/client-go/operator/informers/externalversions"
 	routeclient "github.com/openshift/client-go/route/clientset/versioned"
 	routeinformer "github.com/openshift/client-go/route/informers/externalversions"
+	"github.com/openshift/cluster-authentication-operator/pkg/operator2/workload"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
+	workloadcontroller "github.com/openshift/library-go/pkg/operator/apiserver/controller/workload"
+	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/loglevel"
 	"github.com/openshift/library-go/pkg/operator/management"
 	"github.com/openshift/library-go/pkg/operator/resourcesynccontroller"
@@ -276,7 +280,7 @@ func prepareOauthOperator(ctx context.Context, controllerContext *controllercmd.
 	operatorCtx.controllersToRunFunc = append(operatorCtx.controllersToRunFunc, logLevelController.Run)
 	operatorCtx.controllersToRunFunc = append(operatorCtx.controllersToRunFunc, routerCertsController.Run)
 	operatorCtx.controllersToRunFunc = append(operatorCtx.controllersToRunFunc, managementStateController.Run)
-	operatorCtx.controllersToRunFunc = append(operatorCtx.controllersToRunFunc, func(ctx context.Context, workers int) { staleConditions.Run(workers, ctx.Done()) })
+	operatorCtx.controllersToRunFunc = append(operatorCtx.controllersToRunFunc, func(ctx context.Context, workers int) { staleConditions.Run(ctx, workers) })
 	operatorCtx.controllersToRunFunc = append(operatorCtx.controllersToRunFunc, func(ctx context.Context, workers int) { ingressStateController.Run(workers, ctx.Done()) })
 	operatorCtx.controllersToRunFunc = append(operatorCtx.controllersToRunFunc, func(ctx context.Context, _ int) { operator.Run(ctx.Done()) })
 
@@ -305,24 +309,26 @@ func prepareOauthAPIServerOperator(operatorCtx *operatorContext) error {
 		return err
 	}
 
-	authAPIServerSyncFn := workload.NewOAuthAPIServerWorkload(
+	authAPIServerWorkload := workload.NewOAuthAPIServerWorkload(
 		operatorCtx.operatorClient.Client,
-		workload.CountNodesFuncWrapper(operatorCtx.kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister()),
-		workload.EnsureAtMostOnePodPerNode,
+		workloadcontroller.CountNodesFuncWrapper(operatorCtx.kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister()),
+		workloadcontroller.EnsureAtMostOnePodPerNode,
 		"openshift-oauth-apiserver",
 		os.Getenv("IMAGE_OAUTH_APISERVER"),
 		os.Getenv("OPERATOR_IMAGE"),
 		operatorCtx.kubeClient,
 		eventRecorder,
-		operatorCtx.versionRecorder).Sync
+		operatorCtx.versionRecorder)
 
-	workloadController := workload.NewController(
+	workloadController := workloadcontroller.NewController(
 		"OAuthAPIServerController",
 		"openshift-authentication-operator",
 		"openshift-oauth-apiserver",
+		os.Getenv("OPERATOR_IMAGE_VERSION"),
+		"APIServer",
 		operatorCtx.operatorClient,
 		operatorCtx.kubeClient,
-		authAPIServerSyncFn,
+		authAPIServerWorkload,
 		operatorCtx.configClient.ConfigV1().ClusterOperators(),
 		eventRecorder, operatorCtx.versionRecorder).
 		AddInformer(operatorCtx.kubeInformersForNamespaces.InformersFor("openshift-oauth-apiserver").Core().V1().ConfigMaps().Informer()). // reactor for etcd-serving-ca
@@ -333,7 +339,22 @@ func prepareOauthAPIServerOperator(operatorCtx *operatorContext) error {
 		AddInformer(operatorCtx.operatorClient.Informers.Operator().V1().Authentications().Informer()).
 		AddNamespaceInformer(operatorCtx.kubeInformersForNamespaces.InformersFor("openshift-oauth-apiserver").Core().V1().Namespaces().Informer())
 
+
+
+	apiServerControllers, err := apiservercontrollerset.NewAPIServerControllerSet(
+		operatorCtx.operatorClient,
+		eventRecorder,
+	).WithoutAPIServiceController().
+		WithoutClusterOperatorStatusController().
+		WithoutFinalizerController().
+		WithoutLogLevelController().
+		WithoutConfigUpgradableController().
+		WithoutStaticResourcesController().
+		PrepareRun()
+
+
 	operatorCtx.controllersToRunFunc = append(operatorCtx.controllersToRunFunc, workloadController.Run)
+	operatorCtx.controllersToRunFunc = append(operatorCtx.controllersToRunFunc, func(ctx context.Context, _ int){apiServerControllers.Run(ctx)})
 
 	return nil
 }
