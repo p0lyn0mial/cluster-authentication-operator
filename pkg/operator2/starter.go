@@ -21,6 +21,7 @@ import (
 	routeinformer "github.com/openshift/client-go/route/informers/externalversions"
 	"github.com/openshift/cluster-authentication-operator/pkg/controller/ingressstate"
 	"github.com/openshift/cluster-authentication-operator/pkg/operator2/assets"
+	"github.com/openshift/cluster-authentication-operator/pkg/operator2/revisionclient"
 	"github.com/openshift/cluster-authentication-operator/pkg/operator2/routercerts"
 	"github.com/openshift/cluster-authentication-operator/pkg/operator2/workload"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
@@ -30,6 +31,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/management"
 	"github.com/openshift/library-go/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/library-go/pkg/operator/staleconditions"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -328,6 +330,17 @@ func prepareOauthAPIServerOperator(controllerContext *controllercmd.ControllerCo
 		},
 		operatorCtx.kubeInformersForNamespaces,
 		operatorCtx.kubeClient,
+	).WithRevisionController(
+		"openshift-oauth-apiserver",
+		nil,
+		[]revision.RevisionResource{{
+			Name:     "encryption-config",
+			Optional: true,
+		}},
+		operatorCtx.kubeInformersForNamespaces.InformersFor("openshift-oauth-apiserver"),
+		revisionclient.New(operatorCtx.operatorClient, operatorCtx.operatorClient.Client),
+		v1helpers.CachedConfigMapGetter(operatorCtx.kubeClient.CoreV1(), operatorCtx.kubeInformersForNamespaces),
+		v1helpers.CachedSecretGetter(operatorCtx.kubeClient.CoreV1(), operatorCtx.kubeInformersForNamespaces),
 	).WithoutAPIServiceController().
 		WithoutClusterOperatorStatusController().
 		WithoutFinalizerController().
