@@ -438,6 +438,7 @@ func prepareOauthAPIServerOperator(ctx context.Context, controllerContext *contr
 
 	manageOAuthAPIController := apiservices.NewManageAPIServicesController(
 		"MangeOAuthAPIController",
+		deployer,
 		operatorCtx.operatorClient.Client,
 		operatorCtx.operatorClient.Informers,
 		eventRecorder)
