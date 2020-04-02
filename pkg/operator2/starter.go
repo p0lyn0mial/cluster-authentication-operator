@@ -29,6 +29,7 @@ import (
 	"github.com/openshift/cluster-authentication-operator/pkg/controller/ingressstate"
 	"github.com/openshift/cluster-authentication-operator/pkg/operator2/apiservices"
 	"github.com/openshift/cluster-authentication-operator/pkg/operator2/assets"
+	"github.com/openshift/cluster-authentication-operator/pkg/operator2/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-authentication-operator/pkg/operator2/encryptionprovider"
 	"github.com/openshift/cluster-authentication-operator/pkg/operator2/revisionclient"
 	"github.com/openshift/cluster-authentication-operator/pkg/operator2/routercerts"
@@ -83,7 +84,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 
-	authConfigClient, err := authopclient.NewForConfig(controllerContext.KubeConfig)
+	authOperatorClient, err := authopclient.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -100,13 +101,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	// short resync period as this drives the check frequency when checking the .well-known endpoint. 20 min is too slow for that.
-	authOperatorConfigInformers := authopinformer.NewSharedInformerFactoryWithOptions(authConfigClient, time.Second*30,
+	authOperatorConfigInformers := authopinformer.NewSharedInformerFactoryWithOptions(authOperatorClient, time.Second*30,
 		authopinformer.WithTweakListOptions(singleNameListOptions("cluster")),
 	)
 
 	operatorClient := &OperatorClient{
 		authOperatorConfigInformers,
-		authConfigClient.OperatorV1(),
+		authOperatorClient.OperatorV1(),
 	}
 
 	resourceSyncer := resourcesynccontroller.NewResourceSyncController(
@@ -228,10 +229,20 @@ func prepareOauthOperator(controllerContext *controllercmd.ControllerContext, op
 		controllerContext.EventRecorder,
 	)
 
+	configObserver := configobservercontroller.NewConfigObserver(
+		operatorCtx.operatorClient,
+		operatorCtx.kubeInformersForNamespaces,
+		operatorCtx.operatorConfigInformer,
+		operatorCtx.resourceSyncController,
+		controllerContext.EventRecorder,
+	)
+
 	staleConditions := staleconditions.NewRemoveStaleConditionsController(
 		[]string{
 			// in 4.1.0 this was accidentally in the list.  This can be removed in 4.3.
 			"Degraded",
+			// As of 4.4, this will appear as a configObserver error
+			"FailedRouterSecret",
 		},
 		operatorCtx.operatorClient,
 		controllerContext.EventRecorder,
@@ -261,8 +272,6 @@ func prepareOauthOperator(controllerContext *controllercmd.ControllerContext, op
 	// TODO remove this controller once we support Removed
 	managementStateController := management.NewOperatorManagementStateController("authentication", operatorCtx.operatorClient, controllerContext.EventRecorder)
 	management.SetOperatorNotRemovable()
-	// TODO move to config observers
-	// configobserver.NewConfigObserver(...)
 
 	operatorCtx.informersToRunFunc = append(operatorCtx.informersToRunFunc, routeInformersNamespaced.Start, kubeSystemNamespaceInformers.Start)
 
@@ -273,6 +282,7 @@ func prepareOauthOperator(controllerContext *controllercmd.ControllerContext, op
 		logLevelController.Run,
 		routerCertsController.Run,
 		managementStateController.Run,
+		configObserver.Run,
 		func(ctx context.Context, workers int) { staleConditions.Run(ctx, workers) },
 		func(ctx context.Context, workers int) { ingressStateController.Run(workers, ctx.Done()) },
 		func(ctx context.Context, _ int) { operator.Run(ctx.Done()) })
