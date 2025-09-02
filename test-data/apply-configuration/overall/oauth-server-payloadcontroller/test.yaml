@@ -13,6 +13,6 @@ description: >
   - operator.openshift.io/authentications/cluster: required by the controller, otherwise OAuthConfigDegraded is put and no cfg
   - openshift-authentication/route.openshift.io/routes/oauth-openshift: required by the controller, otherwise OAuthConfigRouteDegraded is put and no cfg
   - openshift-authentication/core/services/oauth-openshift: required by the controller, otherwise OAuthConfigServiceDegraded is put and no cfg
-  - openshift-authentication/core/secrets/v4-0-config-system-session: not strictly required but it makes the test stable and on a real system this artefact will be created only once (?) then reused
+  - openshift-authentication/core/secrets/v4-0-config-system-session: not strictly required but it makes the test stable and on a real system this artefact will be created only once (?) and then reused
 testType: ApplyConfiguration
 now: 2025-08-07T22:38:20Z
