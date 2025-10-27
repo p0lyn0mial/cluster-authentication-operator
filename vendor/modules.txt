@@ -389,8 +389,8 @@ github.com/openshift/library-go/pkg/route/routeapihelpers
 github.com/openshift/library-go/pkg/serviceability
 github.com/openshift/library-go/test/library
 github.com/openshift/library-go/test/library/encryption
-# github.com/openshift/multi-operator-manager v0.0.0-20241205181422-20aa3906b99d
-## explicit; go 1.22.0
+# github.com/openshift/multi-operator-manager v0.0.0-20241205181422-20aa3906b99d => /Users/lszaszki/go/src/github.com/openshift/multi-operator-manager
+## explicit; go 1.24.0
 github.com/openshift/multi-operator-manager/pkg/flagtypes
 github.com/openshift/multi-operator-manager/pkg/library/libraryapplyconfiguration
 github.com/openshift/multi-operator-manager/pkg/library/libraryinputresources
@@ -1531,3 +1531,4 @@ sigs.k8s.io/structured-merge-diff/v4/value
 ## explicit; go 1.12
 sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v2
+# github.com/openshift/multi-operator-manager => /Users/lszaszki/go/src/github.com/openshift/multi-operator-manager

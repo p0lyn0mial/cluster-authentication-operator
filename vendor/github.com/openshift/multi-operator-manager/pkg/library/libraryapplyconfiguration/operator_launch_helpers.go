@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 type OperatorStarter interface {
 	RunOnce(ctx context.Context, input ApplyConfigurationInput) (*ApplyConfigurationRunResult, AllDesiredMutationsGetter, error)
 	Start(ctx context.Context) error
+	StartNamedControllers(ctx context.Context, controllersToRun []string) error
 }
 
 type SimpleOperatorStarter struct {
@@ -28,6 +30,8 @@ type SimpleOperatorStarter struct {
 	ControllerNamedRunOnceFns []NamedRunOnce
 	// ControllerRunFns is useful during a transition to coalesce the operator launching flow.
 	ControllerRunFns []RunFunc
+
+	ControllerNamedRun []NamedRunFunc
 }
 
 var (
@@ -117,6 +121,19 @@ func (a SimpleOperatorStarter) Start(ctx context.Context) error {
 	return nil
 }
 
+func (a SimpleOperatorStarter) StartNamedControllers(ctx context.Context, controllersToRun []string) error {
+	for _, informer := range a.Informers {
+		informer.Start(ctx)
+	}
+
+	for _, controllerNamedRun := range a.ControllerNamedRun {
+		if slices.Contains(controllersToRun, controllerNamedRun.ControllerInstanceName()) {
+			go controllerNamedRun.Run(ctx)
+		}
+	}
+	return nil
+}
+
 type SimplifiedInformerFactory interface {
 	Start(ctx context.Context)
 	WaitForCacheSync(ctx context.Context)
@@ -150,6 +167,30 @@ func (r *namedRunOnce) ControllerInstanceName() string {
 type RunOnceFunc func(ctx context.Context) error
 
 type RunFunc func(ctx context.Context)
+
+type NamedRunFunc interface {
+	ControllerInstanceName() string
+	Run(ctx context.Context)
+}
+
+type namedRunFunc struct {
+	controllerInstanceName string
+	runFunc                RunFunc
+}
+
+func (r *namedRunFunc) ControllerInstanceName() string {
+	return r.controllerInstanceName
+}
+func (r *namedRunFunc) Run(ctx context.Context) {
+	r.runFunc(ctx)
+}
+
+func NewNamedRunFunc(controllerInstanceName string, runFunc RunFunc) *namedRunFunc {
+	return &namedRunFunc{
+		controllerInstanceName: controllerInstanceName,
+		runFunc:                runFunc,
+	}
+}
 
 type GeneratedInformerFactory interface {
 	Start(stopCh <-chan struct{})
