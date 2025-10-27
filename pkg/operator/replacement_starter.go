@@ -44,6 +44,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	rest "k8s.io/client-go/rest"
 )
 
 type authenticationOperatorInput struct {
@@ -64,6 +65,90 @@ type authenticationOperatorInput struct {
 }
 
 const componentName = "cluster-authentication-operator"
+
+type OpenshiftManagerInput struct {
+	Clock clock.Clock
+
+	ManagementClusterKubeConfig *rest.Config
+	GuestClusterKubeConfig      *rest.Config
+}
+
+func CreateOperatorInputFromOM(ctx context.Context, opInput *OpenshiftManagerInput) (*authenticationOperatorInput, error) {
+	kubeClient, err := kubernetes.NewForConfig(opInput.ManagementClusterKubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	configClient, err := configclient.NewForConfig(opInput.GuestClusterKubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	operatorClient, err := operatorclient.NewForConfig(opInput.GuestClusterKubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	routeClient, err := routeclient.NewForConfig(opInput.ManagementClusterKubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	oauthClient, err := oauthclient.NewForConfig(opInput.ManagementClusterKubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	apiregistrationv1Client, err := apiregistrationclient.NewForConfig(opInput.ManagementClusterKubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	migrationClient, err := kubemigratorclient.NewForConfig(opInput.ManagementClusterKubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	apiextensionsClient, err := apiextensionsclient.NewForConfig(opInput.ManagementClusterKubeConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	authenticationOperatorClient, dynamicInformers, err := genericoperatorclient.NewClusterScopedOperatorClient(
+		opInput.Clock,
+		opInput.GuestClusterKubeConfig,
+		operatorv1.GroupVersion.WithResource("authentications"),
+		operatorv1.GroupVersion.WithKind("Authentication"),
+		ExtractOperatorSpec,
+		ExtractOperatorStatus,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	eventRecorder := events.NewKubeRecorderWithOptions(
+		kubeClient.CoreV1().Events("openshift-authentication-operator"),
+		events.RecommendedClusterSingletonCorrelatorOptions(),
+		componentName,
+		&corev1.ObjectReference{
+			Kind:      "Deployment",
+			Namespace: "openshift-authentication-operator",
+			Name:      "authentication-operator",
+		},
+		opInput.Clock,
+	)
+
+	return &authenticationOperatorInput{
+		kubeClient:                   kubeClient,
+		configClient:                 configClient,
+		operatorClient:               operatorClient,
+		routeClient:                  routeClient,
+		oauthClient:                  oauthClient,
+		authenticationOperatorClient: authenticationOperatorClient,
+		apiregistrationv1Client:      apiregistrationv1Client,
+		migrationClient:              migrationClient,
+		apiextensionClient:           apiextensionsClient,
+		eventRecorder:                eventRecorder,
+		clock:                        opInput.Clock,
+		featureGateAccessor:          defaultFeatureGateAccessor,
+		informerFactories: []libraryapplyconfiguration.SimplifiedInformerFactory{
+			libraryapplyconfiguration.DynamicInformerFactoryAdapter(dynamicInformers), // we don't share the dynamic informers, but we only want to start when requested
+		},
+	}, nil
+}
 
 func CreateOperatorInputFromMOM(ctx context.Context, momInput libraryapplyconfiguration.ApplyConfigurationInput) (*authenticationOperatorInput, error) {
 	kubeClient, err := kubernetes.NewForConfigAndClient(manifestclient.RecommendedRESTConfig(), momInput.MutationTrackingClient.GetHTTPClient())
@@ -319,12 +404,13 @@ func CreateOperatorStarter(ctx context.Context, authOperatorInput *authenticatio
 	ret.ControllerRunFns = append(ret.ControllerRunFns, libraryapplyconfiguration.AdaptRunFn(logLevelController.Run))
 	ret.ControllerNamedRunOnceFns = append(ret.ControllerNamedRunOnceFns, libraryapplyconfiguration.AdaptSyncFn(authOperatorInput.eventRecorder, "TODO-logLevelController", logLevelController.Sync))
 
-	oauthRunOnceFns, oauthRunFns, err := prepareOauthOperator(ctx, authOperatorInput, informerFactories, resourceSyncer, versionRecorder)
+	oauthRunOnceFns, oauthRunFns, oauthNamedRunFns, err := prepareOauthOperator(ctx, authOperatorInput, informerFactories, resourceSyncer, versionRecorder)
 	if err != nil {
 		return nil, fmt.Errorf("unable to prepare oauth server: %w", err)
 	}
 	ret.ControllerRunFns = append(ret.ControllerRunFns, oauthRunFns...)
 	ret.ControllerNamedRunOnceFns = append(ret.ControllerNamedRunOnceFns, oauthRunOnceFns...)
+	ret.ControllerNamedRun = append(ret.ControllerNamedRun, oauthNamedRunFns...)
 
 	oauthAPIServerRunOnceFns, oauthAPIServerRunFns, err := prepareOauthAPIServerOperator(ctx, authOperatorInput, informerFactories, resourceSyncer, versionRecorder)
 	if err != nil {

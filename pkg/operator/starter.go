@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"github.com/openshift/cluster-authentication-operator/pkg/controllers/omdemo"
 	"os"
 	"time"
 
@@ -101,10 +102,10 @@ func prepareOauthOperator(
 	informerFactories authenticationOperatorInformerFactories,
 	resourceSyncController *resourcesynccontroller.ResourceSyncController,
 	versionRecorder status.VersionGetter,
-) ([]libraryapplyconfiguration.NamedRunOnce, []libraryapplyconfiguration.RunFunc, error) {
+) ([]libraryapplyconfiguration.NamedRunOnce, []libraryapplyconfiguration.RunFunc, []libraryapplyconfiguration.NamedRunFunc, error) {
 	clusterVersion, err := authOperatorInput.configClient.ConfigV1().ClusterVersions().Get(ctx, "version", metav1.GetOptions{})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	enabledClusterCapabilities := sets.NewString()
@@ -117,7 +118,7 @@ func prepareOauthOperator(
 		resourcesynccontroller.ResourceLocation{Namespace: "openshift-config-managed", Name: "oauth-openshift"},
 		resourcesynccontroller.ResourceLocation{Namespace: "openshift-authentication", Name: "v4-0-config-system-metadata"},
 	); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	staleConditions := staleconditions.NewRemoveStaleConditionsController(
@@ -286,7 +287,7 @@ func prepareOauthOperator(
 
 	systemCABundle, err := loadSystemCACertBundle()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	authRouteCheckController := oauthendpoints.NewOAuthRouteCheckController(
@@ -356,6 +357,8 @@ func prepareOauthOperator(
 		authOperatorInput.eventRecorder,
 	)
 
+	demoController := omdemo.NewDemoController("om-demo", authOperatorInput.authenticationOperatorClient, authOperatorInput.kubeClient, informerFactories.kubeInformersForNamespaces.InformersFor("openshift-authentication").Core().V1().ConfigMaps(), authOperatorInput.eventRecorder)
+
 	runOnceFns := []libraryapplyconfiguration.NamedRunOnce{
 		libraryapplyconfiguration.AdaptSyncFn(authOperatorInput.eventRecorder, "TODO-configObserver", configObserver.Sync),
 		libraryapplyconfiguration.AdaptSyncFn(authOperatorInput.eventRecorder, "TODO-deploymentController", deploymentController.Sync),
@@ -400,6 +403,11 @@ func prepareOauthOperator(
 		libraryapplyconfiguration.AdaptRunFn(ingressStateController.Run),
 	}
 
+	namedRunFns := []libraryapplyconfiguration.NamedRunFunc{
+		libraryapplyconfiguration.NewNamedRunFunc("TODO-staticResourceController", libraryapplyconfiguration.AdaptRunFn(staticResourceController.Run)),
+		libraryapplyconfiguration.NewNamedRunFunc("om-demo", libraryapplyconfiguration.AdaptRunFn(demoController.Run)),
+	}
+
 	if !enabledClusterCapabilities.Has("Console") {
 		// This controller is only necessary if the console capability is not yet enabled in the cluster.
 		// Once the console capability is enabled, this controller will restart the auth operator and next
@@ -412,7 +420,7 @@ func prepareOauthOperator(
 		runFns = append(runFns, libraryapplyconfiguration.AdaptRunFn(terminationController.Run))
 	}
 
-	return runOnceFns, runFns, nil
+	return runOnceFns, runFns, namedRunFns, nil
 }
 
 func prepareOauthAPIServerOperator(
