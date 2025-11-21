@@ -180,3 +180,243 @@ func mustConfigMapFromYAML(t *testing.T, doc string) *corev1.ConfigMap {
 	}
 	return &cm
 }
+
+func TestApplyConfigMapPatchAnnotations(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputYAML    string
+		configMapYML string
+		expectedYAML string
+	}{
+		{
+			name: "adds annotations to empty metadata",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: annotations
+    spec:
+      patch:
+      - op: add
+        path: /metadata/annotations
+        value:
+          foo: bar
+          baz: qux
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  annotations:
+    foo: bar
+    baz: qux
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+		},
+		{
+			name: "appends to existing annotations map",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  annotations:
+    existing: keep
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: annotations
+    spec:
+      patch:
+      - op: add
+        path: /metadata/annotations/new-anno
+        value: new
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  annotations:
+    existing: keep
+    new-anno: new
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+		},
+		{
+			name: "add operation overwrites an existing annotation",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  annotations:
+    env: stage
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: annotations
+    spec:
+      patch:
+      - op: add
+        path: /metadata/annotations/env
+        value: prod
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  annotations:
+    env: prod
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+		},
+		{
+			name: "add operation with identical value keeps single annotation",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  annotations:
+    env: prod
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: annotations
+    spec:
+      patch:
+      - op: add
+        path: /metadata/annotations/env
+        value: prod
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  annotations:
+    env: prod
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := mustDeploymentFromYAML(t, tt.inputYAML)
+			targetConfigMap := mustConfigMapFromYAML(t, tt.configMapYML)
+
+			if err := ApplyConfigMapPatch(target, targetConfigMap); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			expected := mustDeploymentFromYAML(t, tt.expectedYAML)
+			if diff := cmp.Diff(expected, target); diff != "" {
+				t.Fatalf("unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
