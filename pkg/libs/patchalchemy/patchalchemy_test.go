@@ -660,3 +660,130 @@ spec:
 		})
 	}
 }
+
+func TestApplyConfigMapPatchPriorityClass(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputYAML    string
+		configMapYML string
+		expectedYAML string
+	}{
+		{
+			name: "adds priority class when unset",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: priority
+    spec:
+      patch:
+      - op: add
+        path: /spec/template/spec/priorityClassName
+        value: high-priority
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      priorityClassName: high-priority
+`,
+		},
+		{
+			name: "replaces existing priority class",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      priorityClassName: medium
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: priority
+    spec:
+      patch:
+      - op: replace
+        path: /spec/template/spec/priorityClassName
+        value: critical
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      priorityClassName: critical
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := mustDeploymentFromYAML(t, tt.inputYAML)
+			targetConfigMap := mustConfigMapFromYAML(t, tt.configMapYML)
+
+			if err := ApplyConfigMapPatch(target, targetConfigMap); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			expected := mustDeploymentFromYAML(t, tt.expectedYAML)
+			if diff := cmp.Diff(expected, target); diff != "" {
+				t.Fatalf("unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
