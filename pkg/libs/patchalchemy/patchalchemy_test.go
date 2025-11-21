@@ -787,3 +787,247 @@ spec:
 		})
 	}
 }
+
+func TestApplyConfigMapPatchNodeSelector(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputYAML    string
+		configMapYML string
+		expectedYAML string
+	}{
+		{
+			name: "adds node selector when empty",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: nodeselector
+    spec:
+      patch:
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          role: worker
+          zone: east
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      nodeSelector:
+        role: worker
+        zone: east
+`,
+		},
+		{
+			name: "appends selector entry",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      nodeSelector:
+        role: worker
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: nodeselector
+    spec:
+      patch:
+      - op: add
+        path: /spec/template/spec/nodeSelector/zone
+        value: west
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      nodeSelector:
+        role: worker
+        zone: west
+`,
+		},
+		{
+			name: "overwrites existing selector key",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      nodeSelector:
+        role: worker
+        zone: east
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: nodeselector
+    spec:
+      patch:
+      - op: add
+        path: /spec/template/spec/nodeSelector/zone
+        value: central
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      nodeSelector:
+        role: worker
+        zone: central
+`,
+		},
+		{
+			name: "add keeps single entry when identical",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      nodeSelector:
+        role: worker
+        zone: central
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: nodeselector
+    spec:
+      patch:
+      - op: add
+        path: /spec/template/spec/nodeSelector/zone
+        value: central
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      nodeSelector:
+        role: worker
+        zone: central
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := mustDeploymentFromYAML(t, tt.inputYAML)
+			targetConfigMap := mustConfigMapFromYAML(t, tt.configMapYML)
+
+			if err := ApplyConfigMapPatch(target, targetConfigMap); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			expected := mustDeploymentFromYAML(t, tt.expectedYAML)
+			if diff := cmp.Diff(expected, target); diff != "" {
+				t.Fatalf("unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
