@@ -420,3 +420,243 @@ spec:
 		})
 	}
 }
+
+func TestApplyConfigMapPatchLabels(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputYAML    string
+		configMapYML string
+		expectedYAML string
+	}{
+		{
+			name: "adds labels to empty metadata",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata: {}
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: labels
+    spec:
+      patch:
+      - op: add
+        path: /metadata/labels
+        value:
+          foo: bar
+          baz: qux
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  labels:
+    foo: bar
+    baz: qux
+spec:
+  replicas: 1
+  template:
+    metadata: {}
+    spec: {}
+`,
+		},
+		{
+			name: "appends to existing labels map",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  labels:
+    app: demo
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: labels
+    spec:
+      patch:
+      - op: add
+        path: /metadata/labels/env
+        value: test
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  labels:
+    app: demo
+    env: test
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+		},
+		{
+			name: "add operation overwrites existing label",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  labels:
+    app: demo
+    env: stage
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: labels
+    spec:
+      patch:
+      - op: add
+        path: /metadata/labels/env
+        value: prod
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  labels:
+    app: demo
+    env: prod
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+		},
+		{
+			name: "add operation with identical label keeps single entry",
+			inputYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  labels:
+    app: demo
+    env: prod
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+			configMapYML: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jsonpatch-config
+  namespace: default
+data:
+  patch.yaml: |-
+    apiVersion: jsonpatch.openshift.io/v1alpha1
+    kind: JsonPatch
+    metadata:
+      name: labels
+    spec:
+      patch:
+      - op: add
+        path: /metadata/labels/env
+        value: prod
+`,
+			expectedYAML: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+  labels:
+    app: demo
+    env: prod
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec: {}
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := mustDeploymentFromYAML(t, tt.inputYAML)
+			targetConfigMap := mustConfigMapFromYAML(t, tt.configMapYML)
+
+			if err := ApplyConfigMapPatch(target, targetConfigMap); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			expected := mustDeploymentFromYAML(t, tt.expectedYAML)
+			if diff := cmp.Diff(expected, target); diff != "" {
+				t.Fatalf("unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
