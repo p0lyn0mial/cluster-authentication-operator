@@ -164,6 +164,9 @@ github.com/kylelemons/godebug/diff
 github.com/mailru/easyjson/buffer
 github.com/mailru/easyjson/jlexer
 github.com/mailru/easyjson/jwriter
+# github.com/mattbaird/jsonpatch v0.0.0-20240118010651-0ba75a80ca38
+## explicit
+github.com/mattbaird/jsonpatch
 # github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd
 ## explicit
 github.com/modern-go/concurrent
