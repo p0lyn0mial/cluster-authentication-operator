@@ -637,6 +637,9 @@ golang.org/x/text/unicode/norm
 # golang.org/x/time v0.9.0
 ## explicit; go 1.18
 golang.org/x/time/rate
+# gomodules.xyz/jsonpatch/v2 v2.5.0
+## explicit; go 1.20
+gomodules.xyz/jsonpatch/v2
 # google.golang.org/genproto/googleapis/api v0.0.0-20250303144028-a0af3efb3deb
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/api
